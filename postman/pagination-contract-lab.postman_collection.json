@@ -1,0 +1,426 @@
+{
+  "info": {
+    "_postman_id": "e472cbae-e029-4514-bbc9-bd9352bdb7e3",
+    "name": "Pagination Contract Lab",
+    "description": "Six primary pagination contract scenarios for the local synthetic-products API. Each folder starts with an independently executable primary request. Test 5 includes seven supplementary validation requests; Test 6 includes the supplementary over-limit request. Collection-level scripts check JSON structure, product fields, unique IDs, and error codes. Request-level scripts check scenario-specific status, counts, slicing, and metadata. No requests depend on earlier requests or stored responses. No saved response examples are included. Run against the local server, then capture actual evidence. See docs/API_CONTRACT.md and docs/TEST_PLAN.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string",
+      "description": "Local-development API origin, without a trailing slash. Can be overridden by the Local environment."
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Response content type is JSON', function () {",
+          "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+          "});",
+          "const body = pm.response.json();",
+          "if (pm.response.code === 200) {",
+          "  pm.test('Success envelope and pagination fields match the contract', function () {",
+          "    pm.expect(body).to.have.all.keys('data', 'pagination');",
+          "    pm.expect(body.data).to.be.an('array');",
+          "    pm.expect(body.pagination).to.have.all.keys('page', 'limit', 'totalItems', 'totalPages', 'hasNextPage', 'hasPreviousPage');",
+          "    ['page', 'limit', 'totalItems', 'totalPages'].forEach(function (key) {",
+          "      pm.expect(Number.isSafeInteger(body.pagination[key]), key).to.equal(true);",
+          "    });",
+          "    pm.expect(body.pagination.hasNextPage).to.be.a('boolean');",
+          "    pm.expect(body.pagination.hasPreviousPage).to.be.a('boolean');",
+          "  });",
+          "  pm.test('Products have valid fields and unique IDs within this page', function () {",
+          "    body.data.forEach(function (product) {",
+          "      pm.expect(product).to.have.all.keys('id', 'name', 'category', 'price', 'inStock');",
+          "      pm.expect(product.id).to.match(/^prod-[0-9]{3}$/);",
+          "      pm.expect(product.name).to.be.a('string').and.not.empty;",
+          "      pm.expect(product.category).to.be.a('string').and.not.empty;",
+          "      pm.expect(Number.isInteger(product.price)).to.equal(true);",
+          "      pm.expect(product.price).to.be.above(0);",
+          "      pm.expect(product.inStock).to.be.a('boolean');",
+          "    });",
+          "    pm.expect(new Set(body.data.map(function (product) { return product.id; })).size).to.equal(body.data.length);",
+          "  });",
+          "} else {",
+          "  pm.test('Validation error uses HTTP 400 and the documented JSON structure', function () {",
+          "    pm.response.to.have.status(400);",
+          "    pm.expect(body).to.have.all.keys('error');",
+          "    pm.expect(body.error).to.have.all.keys('code', 'message');",
+          "    pm.expect(body.error.code).to.equal('INVALID_QUERY_PARAMETER');",
+          "    pm.expect(body.error.message).to.be.a('string').and.not.empty;",
+          "  });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Test 1 — Default pagination",
+      "description": "Confirm omitted parameters independently default to page 1 and limit 10.",
+      "item": [
+        {
+          "name": "T1 Primary — Default pagination",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: verify the default first page. No query parameters. Expected: HTTP 200, prod-001 through prod-010, 23 total items, 3 total pages, next=true, previous=false.",
+            "url": { "raw": "{{baseUrl}}/api/products", "host": ["{{baseUrl}}"], "path": ["api", "products"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('T1: HTTP 200, default page, count, and metadata', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.data).to.have.lengthOf(10);",
+                  "  pm.expect(body.pagination).to.deep.equal({ page: 1, limit: 10, totalItems: 23, totalPages: 3, hasNextPage: true, hasPreviousPage: false });",
+                  "  pm.expect(body.data.map(function (product) { return product.id; })).to.deep.equal(Array.from({ length: 10 }, function (_, index) { return 'prod-' + String(index + 1).padStart(3, '0'); }));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Test 2 — Full page boundary",
+      "description": "Confirm an explicit full first page and unique IDs. Collection-level tests enforce uniqueness and product shape.",
+      "item": [
+        {
+          "name": "T2 Primary — Full page boundary",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: verify explicit page=1 and limit=10. Expected: HTTP 200, exactly 10 unique products in stable ID order, page=1, limit=10, totalItems=23, totalPages=3, next=true, previous=false.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('T2: HTTP 200, full page, stable order, and exact metadata', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.data).to.have.lengthOf(10);",
+                  "  pm.expect(body.pagination).to.deep.equal({ page: 1, limit: 10, totalItems: 23, totalPages: 3, hasNextPage: true, hasPreviousPage: false });",
+                  "  const ids = body.data.map(function (product) { return product.id; });",
+                  "  pm.expect(new Set(ids).size).to.equal(10);",
+                  "  pm.expect(ids).to.deep.equal(Array.from({ length: 10 }, function (_, index) { return 'prod-' + String(index + 1).padStart(3, '0'); }));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Test 3 — Partial final page",
+      "description": "Catch off-by-one slicing and incorrect last-page navigation flags.",
+      "item": [
+        {
+          "name": "T3 Primary — Partial final page",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: verify the final partial page. Query: page=3, limit=10. Expected: HTTP 200, prod-021 through prod-023, 3 products, totalItems=23, totalPages=3, next=false, previous=true.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=3&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "3" }, { "key": "limit", "value": "10" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('T3: HTTP 200, final three products, and final-page metadata', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.data).to.have.lengthOf(3);",
+                  "  pm.expect(body.data.map(function (product) { return product.id; })).to.deep.equal(['prod-021', 'prod-022', 'prod-023']);",
+                  "  pm.expect(body.pagination).to.deep.equal({ page: 3, limit: 10, totalItems: 23, totalPages: 3, hasNextPage: false, hasPreviousPage: true });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Test 4 — Page beyond the last page",
+      "description": "A valid page past the end is not a validation error and is not clamped.",
+      "item": [
+        {
+          "name": "T4 Primary — Page beyond the last page",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: distinguish an empty valid page from invalid input. Query: page=99, limit=10. Expected: HTTP 200, empty data, page=99 retained, totalItems=23, totalPages=3, next=false, previous=true because page > 1.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=99&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "99" }, { "key": "limit", "value": "10" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('T4: HTTP 200, empty array, and requested beyond-last-page metadata', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.data).to.deep.equal([]);",
+                  "  pm.expect(body.pagination).to.deep.equal({ page: 99, limit: 10, totalItems: 23, totalPages: 3, hasNextPage: false, hasPreviousPage: true });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Test 5 — Invalid pagination inputs",
+      "description": "The primary request has two invalid fields; its single error cannot prove each field is validated independently. Supplementary requests isolate negative page, zero limit, fractional page/limit, nonnumeric page/limit, and an unknown query key. All must return HTTP 400 with the documented error code and message.",
+      "item": [
+        {
+          "name": "T5 Primary — Invalid page and limit",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: verify invalid pagination returns HTTP 400, not defaulted data. Query: page=0, limit=-1. Expected: INVALID_QUERY_PARAMETER and the page message, because page validation is reported first. Supplementary requests isolate each invalid-field category.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=0&limit=-1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "0" }, { "key": "limit", "value": "-1" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('T5: HTTP 400 and the documented first-field validation message', function () {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'The page must be an integer between 1 and 9007199254740991.' } });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "T5a Supplementary — Negative page",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: isolate a negative page with a valid limit. Expected: HTTP 400 and the page validation error.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=-1&limit=10",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "-1" }, { "key": "limit", "value": "10" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T5a: negative page returns HTTP 400 with the page error', function () {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'The page must be an integer between 1 and 9007199254740991.' } });",
+              "});"
+            ] }
+          }]
+        },
+        {
+          "name": "T5b Supplementary — Zero limit",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: isolate limit=0 with a valid page. Expected: HTTP 400 and the limit validation error.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1&limit=0",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "0" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T5b: zero limit returns HTTP 400 with the limit error', function () {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'The limit must be an integer between 1 and 20.' } });",
+              "});"
+            ] }
+          }]
+        },
+        {
+          "name": "T5c Supplementary — Fractional page",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: reject a fractional page rather than truncate it. Expected: HTTP 400 and the page validation error.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1.5&limit=10",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "1.5" }, { "key": "limit", "value": "10" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T5c: fractional page returns HTTP 400 with the page error', function () {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'The page must be an integer between 1 and 9007199254740991.' } });",
+              "});"
+            ] }
+          }]
+        },
+        {
+          "name": "T5d Supplementary — Fractional limit",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: reject a fractional limit rather than truncate it. Expected: HTTP 400 and the limit validation error.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1&limit=2.5",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "2.5" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T5d: fractional limit returns HTTP 400 with the limit error', function () {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'The limit must be an integer between 1 and 20.' } });",
+              "});"
+            ] }
+          }]
+        },
+        {
+          "name": "T5e Supplementary — Nonnumeric page",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: reject a nonnumeric page rather than substitute the default. Expected: HTTP 400 and the page validation error.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=abc&limit=10",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "abc" }, { "key": "limit", "value": "10" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T5e: nonnumeric page returns HTTP 400 with the page error', function () {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'The page must be an integer between 1 and 9007199254740991.' } });",
+              "});"
+            ] }
+          }]
+        },
+        {
+          "name": "T5f Supplementary — Nonnumeric limit",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: reject a nonnumeric limit rather than substitute the default. Expected: HTTP 400 and the limit validation error.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1&limit=abc",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "abc" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T5f: nonnumeric limit returns HTTP 400 with the limit error', function () {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'The limit must be an integer between 1 and 20.' } });",
+              "});"
+            ] }
+          }]
+        },
+        {
+          "name": "T5g Supplementary — Unknown query parameter",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: reject unsupported query parameters instead of silently ignoring them. Query: page=1, limit=10, sort=name. Expected: HTTP 400 and the unknown-parameters message.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1&limit=10&sort=name",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }, { "key": "sort", "value": "name" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T5g: unknown query parameter returns HTTP 400 with the unknown-key error', function () {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'Unknown query parameters are not allowed.' } });",
+              "});"
+            ] }
+          }]
+        }
+      ]
+    },
+    {
+      "name": "Test 6 — Maximum page-size enforcement",
+      "description": "Check both sides of the limit boundary in separate independently executable requests: 20 is accepted, 21 is rejected. Both results are required to mark this scenario Pass.",
+      "item": [
+        {
+          "name": "T6 Primary — Maximum accepted limit",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: accept the exact maximum page size. Query: page=1, limit=20. Expected: HTTP 200, prod-001 through prod-020, 20 unique products, totalItems=23, totalPages=2, next=true, previous=false. Also run T6a to verify rejection above the maximum.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1&limit=20",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "20" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T6: HTTP 200, maximum-size page, stable IDs, and exact metadata', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.data).to.have.lengthOf(20);",
+              "  pm.expect(body.pagination).to.deep.equal({ page: 1, limit: 20, totalItems: 23, totalPages: 2, hasNextPage: true, hasPreviousPage: false });",
+              "  pm.expect(body.data.map(function (product) { return product.id; })).to.deep.equal(Array.from({ length: 20 }, function (_, index) { return 'prod-' + String(index + 1).padStart(3, '0'); }));",
+              "});"
+            ] }
+          }]
+        },
+        {
+          "name": "T6a Supplementary — Limit exceeds maximum",
+          "request": {
+            "method": "GET",
+            "description": "Purpose: enforce the upper boundary without clamping. Query: page=1, limit=21. Expected: HTTP 400, INVALID_QUERY_PARAMETER, and the documented limit message.",
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=1&limit=21",
+              "host": ["{{baseUrl}}"], "path": ["api", "products"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "21" }]
+            }
+          },
+          "event": [{
+            "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('T6a: limit=21 returns HTTP 400, not a clamped page', function () {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json()).to.deep.equal({ error: { code: 'INVALID_QUERY_PARAMETER', message: 'The limit must be an integer between 1 and 20.' } });",
+              "});"
+            ] }
+          }]
+        }
+      ]
+    }
+  ]
+}
